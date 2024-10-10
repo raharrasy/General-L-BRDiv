@@ -1,0 +1,70 @@
+defaults:
+  - hydra: hydra_simple
+  - _self_
+
+
+name: CookingZoo
+separate_controllers: false
+
+logger:
+  load_dir: ${name}
+  log_grad: false
+  project: DiversityGeneration
+  entity: gingerninja
+  logger_period: 0.1
+  save_model: true
+  save_model_period: 5
+
+# # Data collection-related parameters
+# matrix-game-no-state-v0
+env:
+  name: matrix-game-rps-v0
+  parallel:
+    sp_collection: 10
+    xp_collection: 30
+    eval: 50
+
+run:
+  use_cuda: false
+  num_timesteps: 12000000
+  num_eval_episodes: 1
+  seed: 0
+  eval_seed: 500
+  total_checkpoints: 50
+  load_from_checkpoint: -1
+  device_id: 3
+
+populations:
+  num_populations: 3
+
+train:
+  method: L-BRDiv
+  timesteps_per_update: 4
+  gamma: 0.99
+  target_update_rate: 1e-3
+  lr: 1e-3
+  max_grad_norm: 1.0
+  epochs_per_update: 10
+  eps_clip: 0.2
+  init_lagrange: 0.0
+  dual_clip: 3.0
+  lagrange_update_period: 10
+  with_dual_clip: false
+  anneal_end: 0.5
+  lagrange_lr: 0.05
+  tolerance_factor: 4.0
+
+loss_weights:
+  sp_val_loss_weight: 1.0
+  xp_val_loss_weight: 1.0
+  entropy_regularizer_loss: 0.001
+  lagrange_weights: 1.0
+
+model:
+  actor_dims:
+    - 32
+    - 32
+  critic_dims:
+    - 32
+    - 32
+  init_ortho: false
