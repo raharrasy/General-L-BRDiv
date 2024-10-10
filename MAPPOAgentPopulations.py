@@ -1,3 +1,4 @@
+from ensurepip import bootstrap
 from Network import fc_network
 from torch import optim, nn
 from torch.autograd import Variable
@@ -211,22 +212,18 @@ class MAPPOAgentPopulations(object):
         :param input: Input vector (Format: Obs + population one-hot encoding )
         :return: logits: Value function estimate
         """
-        per_id_input = [None] * (2 * self.num_populations)
-        input1, input2 = input[:,0,:], input[:,1,:]
+        per_id_input = [None] * (self.num_agents * self.num_populations)
         
         for pop_id in range(self.num_populations):
-            agent1_features = input1[
-                input1[:, -self.num_populations + pop_id] == 1
-            ][:, :-self.num_populations]
-            agent2_features = input2[
-                input2[:, -self.num_populations + pop_id] == 1
-            ][:, :-self.num_populations]
-            per_id_input[2*pop_id] = torch.cat([agent1_features, agent2_features], dim=-1)
-            per_id_input[2*pop_id+1] = torch.cat([agent1_features, agent2_features], dim=-1)
+            eligible_input = input[input[:, 0, -self.num_populations + pop_id] == 1]
+            if not eligible_input.nelement() == 0:
+                eligible_input = eligible_input[:, :, :-self.num_populations].reshape(eligible_input.size()[0], -1)
+                for a_id in range(self.num_agents):
+                    per_id_input[self.num_agents*pop_id+a_id] = eligible_input
 
-        per_id_input_filtered = [(idx,inp) for idx, inp in enumerate(per_id_input) if not inp.nelement() == 0]
+        per_id_input_filtered = [(idx,inp) for idx, inp in enumerate(per_id_input) if not inp is None]
         executed_models = [critic for idx, critic in enumerate(self.joint_action_value_functions) if
-                           not per_id_input[idx].nelement() == 0]
+                           not per_id_input[idx] is None]
 
         futures = [
             torch.jit.fork(model, per_id_input_filtered[i][1]) for i, model
@@ -236,25 +233,21 @@ class MAPPOAgentPopulations(object):
         results = [torch.jit.wait(fut) for fut in futures]
 
         #Get default value functions for Agent 1 and 2
-        vals1 = torch.zeros([input.size()[0], 1]).double().to(self.device)
-        vals2 = torch.zeros([input.size()[0], 1]).double().to(self.device)
+        all_vals = torch.zeros([input.size()[0], self.num_agents]).double().to(self.device)
 
         # Rearrange output into two 2-D vectors of size (Batch size x 1)
         id = 0
         for idx, _ in per_id_input_filtered:
-            population_id = idx // 2
-            if idx % 2 == 0:
-                vals1[
-                    input1[:, -self.num_populations + population_id] == 1
-                ] = results[id]
-                id += 1
-            else:
-                vals2[
-                    input2[:, -self.num_populations + population_id] == 1
-                ] = results[id]
+            population_id = idx // self.num_agents
+            agent_id = idx % self.num_agents
+
+            if not (input[:, agent_id, -self.num_populations + population_id] == 1).sum() == 0:
+                all_vals[
+                    input[:, agent_id, -self.num_populations + population_id] == 1, agent_id
+                ] = results[id].squeeze(-1)
                 id += 1
 
-        return vals1, vals2
+        return all_vals
     
     def separate_target_critic_eval(self,input):
         """
@@ -265,22 +258,18 @@ class MAPPOAgentPopulations(object):
         :return: logits: Value function estimate
         """
 
-        per_id_input = [None] * (2 * self.num_populations)
-        input1, input2 = input[:,0,:], input[:,1,:]
+        per_id_input = [None] * (self.num_agents * self.num_populations)
 
         for pop_id in range(self.num_populations):
-            agent1_features = input1[
-                input1[:, -self.num_populations + pop_id] == 1
-            ][:, :-self.num_populations]
-            agent2_features = input2[
-                input2[:, -self.num_populations + pop_id] == 1
-            ][:, :-self.num_populations]
-            per_id_input[2*pop_id] = torch.cat([agent1_features, agent2_features], dim=-1)
-            per_id_input[2*pop_id+1] = torch.cat([agent1_features, agent2_features], dim=-1)
+            eligible_input = input[input[:, 0, -self.num_populations + pop_id] == 1]
+            if not eligible_input.nelement() == 0:
+                eligible_input = eligible_input[:, :, :-self.num_populations].reshape(eligible_input.size()[0], -1)
+                for a_id in range(self.num_agents):
+                    per_id_input[self.num_agents*pop_id+a_id] = eligible_input
 
-        per_id_input_filtered = [(idx,inp) for idx, inp in enumerate(per_id_input) if not inp.nelement() == 0]
+        per_id_input_filtered = [(idx,inp) for idx, inp in enumerate(per_id_input) if not inp is None]
         executed_models = [critic for idx, critic in enumerate(self.target_joint_action_value_functions) if
-                           not per_id_input[idx].nelement() == 0]
+                           not per_id_input[idx] is None]
 
         futures = [
             torch.jit.fork(model, per_id_input_filtered[i][1]) for i, model
@@ -290,25 +279,20 @@ class MAPPOAgentPopulations(object):
         results = [torch.jit.wait(fut) for fut in futures]
 
         #Get default value functions for Agent 1 and 2
-        vals1 = torch.zeros([input.size()[0], 1]).double().to(self.device)
-        vals2 = torch.zeros([input.size()[0], 1]).double().to(self.device)
+        all_vals = torch.zeros([input.size()[0], self.num_agents]).double().to(self.device)
 
         # Rearrange output into two 2-D vectors of size (Batch size x 1)
         id = 0
         for idx, _ in per_id_input_filtered:
             population_id = idx // self.num_agents
-            if idx % 2 == 0:
-                vals1[
-                    input1[:, -self.num_populations + population_id] == 1
-                ] = results[id]
-                id += 1
-            else:
-                vals2[
-                    input2[:, -self.num_populations + population_id] == 1
-                ] = results[id]
+            agent_id = idx % self.num_agents
+            if not (input[:, agent_id, -self.num_populations + population_id] == 1).sum() == 0:
+                all_vals[
+                    input[:, agent_id, -self.num_populations + population_id] == 1, agent_id
+                ] = results[id].squeeze(-1)
                 id += 1
 
-        return vals1, vals2
+        return all_vals
 
     def decide_acts(self, obs_w_commands, with_log_probs=False, eval=False, epsilon=None):
         """
@@ -335,7 +319,7 @@ class MAPPOAgentPopulations(object):
         acts_list = acts.tolist()
         return acts_list
 
-    def compute_sp_advantages(self, obs, n_obs, acts, dones, rews):
+    def compute_sp_advantages(self, obs, n_obs, acts, dones, truncs, rews):
         """
         A function that computes the weighted advantage function as described in Expression 14
         :param obs: Agent observation
@@ -351,49 +335,38 @@ class MAPPOAgentPopulations(object):
         obs_length = obs.size()[1]
         
         # Initialize empty lists that saves every important data for actor loss computation
-        baseline_values1 = []
-        pred_values1 = []
-        baseline_values2 = []
-        pred_values2 = []
+        baseline_values = []
+        pred_values = []
 
         # Initialize target diversity at end of episode to None
-        pred_value1 = None
-        pred_value2 = None
+        bootstrap_pred_values = None
         for idx in reversed(range(obs_length)):
             obs_idx = obs[:, idx, :, :]
             n_obs_idx = n_obs[:, idx, :, :]
-            sp_rl_rew1 = rews[:, idx, 0]
-            sp_rl_rew2 = rews[:, idx, 1]
+            all_rews = rews[:, idx, :]
             sp_rl_done = dones[:, idx]
+            sp_rl_truncs = truncs[:, idx]
 
-            if idx == obs_length - 1:
-                # Get predicted returns from player 1 and 2's joint action value model
-                pred_value1, pred_value2 = self.separate_critic_eval(n_obs_idx)
+            pred_value = self.separate_critic_eval(n_obs_idx)
+            if idx == obs_length-1:
+                bootstrap_pred_value = pred_value
 
-            pred_value1 = (
-                    sp_rl_rew1.view(-1, 1) + (
-                    self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1)) * pred_value1)
+            bootstrap_pred_value[sp_rl_truncs==1] = pred_value[sp_rl_truncs==1]
+            bootstrap_pred_value = (
+                    all_rews + (
+                    self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1).repeat(1, self.num_agents)) * bootstrap_pred_value)
             ).detach()
 
-            pred_value2 = (
-                    sp_rl_rew2.view(-1, 1) + (
-                    self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1)) * pred_value2)
-            ).detach()
+            baseline_value = self.separate_critic_eval(obs_idx)
 
-            baseline_value1, baseline_value2 = self.separate_critic_eval(obs_idx)
-
-            pred_values1.append(pred_value1)
-            baseline_values1.append(baseline_value1)
-            pred_values2.append(pred_value2)
-            baseline_values2.append(baseline_value2)
+            pred_values.append(bootstrap_pred_value.clone())
+            baseline_values.append(baseline_value)
             
         # Combine lists into a single tensor for actor loss from SP data
-        all_baselines1 = torch.cat(baseline_values1, dim=0).squeeze(-1)
-        all_preds1 = torch.cat(pred_values1, dim=0).squeeze(-1)
-        all_baselines2 = torch.cat(baseline_values2, dim=0).squeeze(-1)
-        all_preds2 = torch.cat(pred_values2, dim=0).squeeze(-1)
+        all_baselines = torch.cat(baseline_values, dim=0).squeeze(-1)
+        all_preds = torch.cat(pred_values, dim=0).squeeze(-1)
 
-        return all_preds1.detach() - all_baselines1.detach(), all_preds2.detach() - all_baselines2.detach(), None, None
+        return all_preds.detach() - all_baselines.detach(), None, None, None
 
     def compute_sp_old_probs(self, obs, acts):
         """
@@ -456,42 +429,25 @@ class MAPPOAgentPopulations(object):
         # Combine lists into a single tensor for actor loss from SP data
         action_entropies = torch.cat(action_entropy, dim=0)
         action_log_likelihoods = torch.cat(action_likelihood, dim=0)
-        action_log_likelihoods1 = action_log_likelihoods[:,0]
-        action_log_likelihoods2 = action_log_likelihoods[:,1]
-        action_old_log_likelihoods1 = old_log_likelihoods[:,0]
-        action_old_log_likelihoods2 = old_log_likelihoods[:,1]
-
         entropy_loss = -(action_entropies).sum(dim=-1).mean()
 
-
-        ratio1 = torch.exp(action_log_likelihoods1 - action_old_log_likelihoods1.detach())
-        ratio2 = torch.exp(action_log_likelihoods2 - action_old_log_likelihoods2.detach())
-
-        surr11 = ratio1 * advantages1
+        ratio = torch.exp(action_log_likelihoods - old_log_likelihoods.detach())
+        surr11 = ratio * advantages1
         surr21 = torch.clamp(
-            ratio1,
+            ratio,
             1 - self.config.train["eps_clip"],
             1 + self.config.train["eps_clip"]
         ) * advantages1
 
-        surr12 = ratio2 * advantages2
-        surr22 = torch.clamp(
-            ratio2,
-            1 - self.config.train["eps_clip"],
-            1 + self.config.train["eps_clip"]
-        ) * advantages2
-
         pol_list1 = torch.min(surr11, surr21)
-        pol_list2 = torch.min(surr12, surr22)
         if self.config.train["with_dual_clip"]:
             pol_list1[advantages1 < 0] = torch.max(pol_list1[advantages1 < 0], self.config.train["dual_clip"]*advantages1[advantages1 < 0])
-            pol_list2[advantages2 < 0] = torch.max(pol_list2[advantages2 < 0], self.config.train["dual_clip"]*advantages2[advantages2 < 0])
-        pol_loss = -(pol_list1.mean() + pol_list2.mean())
+        pol_loss = -pol_list1.mean()
         return pol_loss, entropy_loss
 
     def compute_sp_critic_loss(
             self, obs_batch, n_obs_batch,
-            acts_batch, sp_rew_batch, sp_done_batch
+            acts_batch, sp_rew_batch, sp_done_batch, sp_trunc_batch
     ):
         """
             A function that computes critic loss based on self-play interaction
@@ -506,48 +462,36 @@ class MAPPOAgentPopulations(object):
         obs_length = obs_batch.size()[1]
 
         # Store values separately for each agent. This one is for Agent 1.
-        predicted_values1 = []
-        target_values1 = []
-        target_value1 = None
-
-        # Store values separately for each agent. This one is for Agent 2.
-        predicted_values2 = []
-        target_values2 = []
-        target_value2 = None
+        predicted_values = []
+        target_values = []
+        target_value = None
 
         for idx in reversed(range(obs_length)):
             obs_idx = obs_batch[:,idx,:,:]
             n_obs_idx = n_obs_batch[:,idx,:,:]
 
-            sp_v_values1, sp_v_values2 = self.separate_critic_eval(obs_idx)
-            sp_rl_rew1 = sp_rew_batch[:, idx, 0]
-            sp_rl_rew2 = sp_rew_batch[:, idx, 1]
+            sp_v_values = self.separate_critic_eval(obs_idx)
+            sp_rl_rew = sp_rew_batch[:, idx, :]
             sp_rl_done = sp_done_batch[:, idx]
+            sp_rl_trunc = sp_trunc_batch[:, idx]
 
+            bootstrap_target_val = self.separate_target_critic_eval(n_obs_idx)
             if idx == obs_length-1:
-                target_value1, target_value2 = self.separate_target_critic_eval(n_obs_idx)
+                target_value = bootstrap_target_val
 
-            target_value1 = (
-                    sp_rl_rew1.view(-1, 1) + (self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1)) * target_value1)
+            target_value[sp_rl_trunc==1] = bootstrap_target_val[sp_rl_trunc==1]
+            target_value = (
+                    sp_rl_rew + (self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1).repeat(1, self.num_agents)) * target_value)
             ).detach()
 
-            target_value2 = (
-                    sp_rl_rew2.view(-1, 1) + (self.config.train["gamma"] * (1 - sp_rl_done.view(-1, 1)) * target_value2)
-            ).detach()
+            predicted_values.append(sp_v_values)
+            target_values.append(target_value.clone())
 
-            predicted_values1.append(sp_v_values1)
-            target_values1.append(target_value1)
-            predicted_values2.append(sp_v_values2)
-            target_values2.append(target_value2)
+        predicted_values = torch.cat(predicted_values, dim=0)
+        all_target_values = torch.cat(target_values, dim=0)
 
-        predicted_values1 = torch.cat(predicted_values1, dim=0)
-        all_target_values1 = torch.cat(target_values1, dim=0)
-        predicted_values2 = torch.cat(predicted_values2, dim=0)
-        all_target_values2 = torch.cat(target_values2, dim=0)
-
-        sp_critic_loss1 = (0.5 * ((predicted_values1 - all_target_values1) ** 2)).mean()
-        sp_critic_loss2 = (0.5 * ((predicted_values2 - all_target_values2) ** 2)).mean()
-        return sp_critic_loss1 + sp_critic_loss2
+        sp_critic_loss1 = (0.5 * ((predicted_values - all_target_values) ** 2)).mean()
+        return sp_critic_loss1
 
     def update(self, batches, xp_batches):
         """
@@ -562,10 +506,11 @@ class MAPPOAgentPopulations(object):
         obs_batch, acts_batch = torch.tensor(batches[0]).to(self.device), torch.tensor(batches[1]).to(self.device)
         sp_n_obs_batch = torch.tensor(batches[2]).to(self.device)
         sp_done_batch = torch.tensor(batches[3]).double().to(self.device)
-        rewards_batch = torch.tensor(batches[4]).double().to(self.device)
+        sp_trunc_batch = torch.tensor(batches[4]).double().to(self.device)
+        rewards_batch = torch.tensor(batches[5]).double().to(self.device)
 
         sp_advantages1, sp_advantages2, _, _ = self.compute_sp_advantages(
-            obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, rewards_batch
+            obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
         )
 
         for pol, old_pol in zip(self.joint_policy, self.old_joint_policy):
@@ -595,7 +540,7 @@ class MAPPOAgentPopulations(object):
         self.critic_optimizer.zero_grad()
         # Compute SP Critic Loss
         sp_critic_loss = self.compute_sp_critic_loss(
-            obs_batch, sp_n_obs_batch, acts_batch, rewards_batch, sp_done_batch
+            obs_batch, sp_n_obs_batch, acts_batch, rewards_batch, sp_done_batch, sp_trunc_batch
         )
 
         total_critic_loss = sp_critic_loss * self.config.loss_weights["sp_val_loss_weight"]

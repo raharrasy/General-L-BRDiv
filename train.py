@@ -64,7 +64,7 @@ class DiversityTraining(object):
         raise Exception('Currently unsupported env!')
 
     def algorithm_select(self, alg_name):
-        if alg_name == "FCP":
+        if alg_name == "MAPPO":
             return MAPPOAgentPopulations
         elif alg_name == "L-BRDiv":
             return NAgentLBRDivAgentPopulations
