@@ -66,7 +66,7 @@ class DiversityTraining(object):
     def algorithm_select(self, alg_name):
         if alg_name == "MAPPO":
             return MAPPOAgentPopulations
-        elif alg_name == "L-BRDiv":
+        elif alg_name == "L-BRDiv" or alg_name == "BRDiv":
             return NAgentLBRDivAgentPopulations
         raise Exception('Currently unsupported algorithm!')
 
@@ -578,11 +578,6 @@ class DiversityTraining(object):
             A method that encompasses the main training loop for population-based training.
         """
 
-        # Create logging directories & utilities
-        def randomString(stringLength=10):
-            letters = string.ascii_lowercase
-            return ''.join(random.choice(letters) for i in range(stringLength))
-
         # Initialize environment, agent population model & experience replay based on obs vector sizes
         env1 = self.env_select(
             self.config.env["name"]
@@ -605,7 +600,7 @@ class DiversityTraining(object):
 
         # Create directories for logging
         self.create_directories()
-        pop_class = self.algorithm_select(self.config.train["method"] )
+        pop_class = self.algorithm_select(self.config.train["method"])
         
         # Initialize implemented agent population
         agent_population = pop_class(

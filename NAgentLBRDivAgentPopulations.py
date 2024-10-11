@@ -41,6 +41,9 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             critic_params_list,
             lr=self.config.train["lr"]
         )
+        self.constant_lagrange = False
+        if self.config.env["name"] == "BRDiv":
+            self.constant_lagrange = True
 
     def compute_const_lagrange1(self):
         """
@@ -756,7 +759,7 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         )
 
         # Compute SP Lagrange Loss
-        if self.total_updates % self.config.train["lagrange_update_period"] == 0:
+        if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
             sp_lagrange_data, lagrange_mult_norm_sp1 = self.compute_sp_lagrange_loss(
                 obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
             )
@@ -770,13 +773,13 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         )
 
         # Compute XP Lagrange Loss
-        if self.total_updates % self.config.train["lagrange_update_period"] == 0:
+        if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
             xp_lagrange_data, lagrange_mult_norm_xp1 = self.compute_xp_lagrange_loss(
                 xp_obs, xp_acts, xp_rews, xp_dones, xp_trunc_batch, xp_n_obses
             )
 
         total_critic_loss = sp_critic_loss * self.config.loss_weights["sp_val_loss_weight"] + total_xp_critic_loss * self.config.loss_weights["xp_val_loss_weight"]
-        if self.total_updates % self.config.train["lagrange_update_period"] == 0:
+        if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
             #total_lagrange_loss = self.config.loss_weights["lagrange_weights"] * (sp_lagrange_loss + xp_lagrange_loss)
             sp_all_diff1, sp_all_id11, sp_all_id21 = sp_lagrange_data
             xp_all_diff1, xp_all_id11, xp_all_id21 = xp_lagrange_data
