@@ -66,7 +66,7 @@ class DiversityTraining(object):
     def algorithm_select(self, alg_name):
         if alg_name == "MAPPO":
             return MAPPOAgentPopulations
-        elif alg_name == "L-BRDiv" or alg_name == "BRDiv":
+        elif alg_name == "L-BRDiv" or alg_name == "BRDiv" or alg_name == "LBRDiv-Ego-Opt":
             return NAgentLBRDivAgentPopulations
         raise Exception('Currently unsupported algorithm!')
 

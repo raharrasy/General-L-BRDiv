@@ -41,9 +41,13 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             critic_params_list,
             lr=self.config.train["lr"]
         )
+
         self.constant_lagrange = False
+        self.conf_opt = True
         if self.config.env["name"] == "BRDiv":
             self.constant_lagrange = True
+        elif self.config.env["name"] == "LBRDiv-Ego-Opt":
+            self.conf_opt = False
 
     def compute_const_lagrange1(self):
         """
@@ -169,8 +173,12 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         weights1 = torch.sum(all_lagrangian_matrices11, dim=-1)
         weights2 = torch.sum(all_lagrangian_matrices12, dim=-1)
 
-        baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
-        opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+        if not self.conf_opt:
+            baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+            opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+        else:                                       
+            baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+            opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
         baseline_diversity_values2 = weights2 * all_baseline_matrices2.squeeze(1)
         opt_diversity_values2 = weights2 * all_opt_matrices2.squeeze(1)
 
