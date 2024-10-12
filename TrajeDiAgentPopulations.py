@@ -101,10 +101,11 @@ class TrajeDiAgentPopulations(MAPPOAgentPopulations):
         obs_batch, acts_batch = torch.tensor(batches[0]).to(self.device), torch.tensor(batches[1]).to(self.device)
         sp_n_obs_batch = torch.tensor(batches[2]).to(self.device)
         sp_done_batch = torch.tensor(batches[3]).double().to(self.device)
-        rewards_batch = torch.tensor(batches[4]).double().to(self.device)
+        sp_trunc_batch = torch.tensor(batches[4]).double().to(self.device)
+        rewards_batch = torch.tensor(batches[5]).double().to(self.device)
 
         sp_advantages1, sp_advantages2, _, _ = self.compute_sp_advantages(
-            obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, rewards_batch
+            obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
         )
 
         for pol, old_pol in zip(self.joint_policy, self.old_joint_policy):
@@ -135,7 +136,7 @@ class TrajeDiAgentPopulations(MAPPOAgentPopulations):
         self.critic_optimizer.zero_grad()
         # Compute SP Critic Loss
         sp_critic_loss = self.compute_sp_critic_loss(
-            obs_batch, sp_n_obs_batch, acts_batch, rewards_batch, sp_done_batch
+            obs_batch, sp_n_obs_batch, acts_batch, rewards_batch, sp_done_batch, sp_trunc_batch
         )
 
         total_critic_loss = sp_critic_loss * self.config.loss_weights["sp_val_loss_weight"]
