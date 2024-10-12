@@ -51,6 +51,7 @@ train:
   dual_clip: 3.0
   lagrange_update_period: 10
   with_dual_clip: false
+  gamma_act_jsd: 0.95
 
 loss_weights:
   sp_val_loss_weight: 5.0
