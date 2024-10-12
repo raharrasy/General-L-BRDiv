@@ -14,6 +14,7 @@ import numpy as np
 from ExpReplay import EpisodicExperienceReplay
 from MAPPOAgentPopulations import MAPPOAgentPopulations
 from NAgentLBRDivAgentPopulations import NAgentLBRDivAgentPopulations
+from TrajeDiAgentPopulations import TrajeDiAgentPopulations
 import os
 import wandb
 from omegaconf import OmegaConf
@@ -68,6 +69,8 @@ class DiversityTraining(object):
             return MAPPOAgentPopulations
         elif alg_name == "L-BRDiv" or alg_name == "BRDiv" or alg_name == "LBRDiv-Ego-Opt" or alg_name == "LBRDiv-Two-Constraints":
             return NAgentLBRDivAgentPopulations
+        elif alg_name == "TrajeDi":
+            return TrajeDiAgentPopulations
         raise Exception('Currently unsupported algorithm!')
 
     def get_obs_sizes(self, obs_space):
