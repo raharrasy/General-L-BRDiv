@@ -44,10 +44,18 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
 
         self.constant_lagrange = False
         self.conf_opt = True
+        self.dual_constraints = False
         if self.config.env["name"] == "BRDiv":
             self.constant_lagrange = True
         elif self.config.env["name"] == "LBRDiv-Ego-Opt":
             self.conf_opt = False
+        elif self.config.env["name"] == "LBRDiv-Two-Constraints":
+            self.dual_constraints = True
+            # Add lagrange multiplier to help uphold second constraints
+            lagrange_mat2 = self.config.train["init_lagrange"]*torch.ones([self.config.populations["num_populations"], self.config.populations["num_populations"]]).double().to(self.device)
+            lagrange_mat2.fill_diagonal_(0.5)
+            self.lagrange_multiplier_matrix2 = Variable(lagrange_mat2.data, requires_grad=False)
+            self.normalizer2 = self.compute_const_lagrange2().mean(dim=-1, keepdim=False)
 
     def compute_const_lagrange1(self):
         """
@@ -55,6 +63,13 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         :return: \alpha^{1}
         """
         return F.relu(self.lagrange_multiplier_matrix1)
+    
+    def compute_const_lagrange2(self):
+        """
+        A method that returns Lagrange multipliers related to first constraints
+        :return: \alpha^{1}
+        """
+        return F.relu(self.lagrange_multiplier_matrix2)
     
     def compute_sp_advantages(self, obs, n_obs, acts, dones, trunc, rews):
         """
@@ -82,7 +97,10 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         entropy_weight2 = []
 
         lagrange_matrix_mean_norm1 = self.compute_const_lagrange1().mean(dim=-1, keepdim=False)
-        lagrange_matrix_mean_norm2 = self.compute_const_lagrange1().mean(dim=0, keepdim=False)
+        if self.dual_constraints:
+            lagrange_matrix_mean_norm2 = self.compute_const_lagrange2().mean(dim=-1, keepdim=False)
+        else:
+            lagrange_matrix_mean_norm2 = self.compute_const_lagrange1().mean(dim=0, keepdim=False)
 
         pos_entropy_weights1 = (lagrange_matrix_mean_norm1/self.normalizer1) * self.config.loss_weights["entropy_regularizer_loss"]
         pos_entropy_weights2 = (lagrange_matrix_mean_norm2/self.normalizer2) * self.config.loss_weights["entropy_regularizer_loss"]
@@ -114,13 +132,23 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
                 all_conf_target_diversity_values = all_conf_target_diversity_values_trunced
                 target_diversity_value2 = target_diversity_value2_trunced
 
-            lagrangian_matrix11 = self.compute_const_lagrange1().detach().clone()
-            lagrangian_matrix11.fill_diagonal_(0.0)
-            lagrangian_matrix11 = lagrangian_matrix11.unsqueeze(0).repeat(batch_size, 1, 1)
-            
-            lagrangian_matrix12 = self.compute_const_lagrange1().detach().clone()
-            lagrangian_matrix12.fill_diagonal_(1.0) 
-            lagrangian_matrix12 = lagrangian_matrix12.unsqueeze(0).repeat(batch_size, 1, 1)
+            if not self.dual_constraints:
+                lagrangian_matrix11 = self.compute_const_lagrange1().detach().clone()
+                lagrangian_matrix11.fill_diagonal_(0.0)
+                lagrangian_matrix11 = lagrangian_matrix11.unsqueeze(0).repeat(batch_size, 1, 1)
+                
+                lagrangian_matrix12 = self.compute_const_lagrange1().detach().clone()
+                lagrangian_matrix12.fill_diagonal_(1.0) 
+                lagrangian_matrix12 = lagrangian_matrix12.unsqueeze(0).repeat(batch_size, 1, 1)
+            else:
+                lagrangian_matrix11 = self.compute_const_lagrange1().detach().clone()
+                lagrangian_matrix11.fill_diagonal_(0.5)
+                lagrangian_matrix11 = lagrangian_matrix11.unsqueeze(0).repeat(batch_size, 1, 1)
+                
+                lagrangian_matrix12 = self.compute_const_lagrange2().detach().clone()
+                lagrangian_matrix12.fill_diagonal_(0.5) 
+                lagrangian_matrix12 = lagrangian_matrix12.unsqueeze(0).repeat(batch_size, 1, 1)
+
 
             offset = self.num_populations + self.num_agents
             accessed_index = obs_idx[:, :, -offset:-offset + self.num_populations].argmax(dim=-1)
@@ -158,8 +186,11 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             entropy_weight2.append(pos_entropy_weights2[idx_egos])
 
             lagrangian_matrices11.append(lagrangian_matrix11[torch.arange(obs_idx.size(0)), idx_confs[:,0], :])
-            lagrangian_matrices12.append(lagrangian_matrix12[torch.arange(obs_idx.size(0)), idx_confs[:,0], :])
-            
+            if self.dual_constraints:
+                lagrangian_matrices12.append(lagrangian_matrix12[torch.arange(obs_idx.size(0)), idx_egos, :])
+            else:
+                lagrangian_matrices12.append(lagrangian_matrix12[torch.arange(obs_idx.size(0)), idx_confs[:,0], :])
+                
         # Combine lists into a single tensor for actor loss from SP data
         all_baseline_matrices1 = torch.cat(baseline_xp_matrics1, dim=0)
         all_opt_matrices1 = torch.cat(opt_xp_matrics1, dim=0)
@@ -173,14 +204,25 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         weights1 = torch.sum(all_lagrangian_matrices11, dim=-1)
         weights2 = torch.sum(all_lagrangian_matrices12, dim=-1)
 
-        if not self.conf_opt:
-            baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
-            opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
-        else:                                       
-            baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
-            opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
-        baseline_diversity_values2 = weights2 * all_baseline_matrices2.squeeze(1)
-        opt_diversity_values2 = weights2 * all_opt_matrices2.squeeze(1)
+        if not self.dual_constraints:
+            if not self.conf_opt:
+                baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+                opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices2.repeat(1, self.num_agents-1) + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+            else:                                       
+                baseline_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+                opt_diversity_values1 = torch.ones_like(weights1).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices1 + weights1.unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+            baseline_diversity_values2 = weights2 * all_baseline_matrices2.squeeze(1)
+            opt_diversity_values2 = weights2 * all_opt_matrices2.squeeze(1)
+        else:
+            all_weights = weights1 + weights2
+            if not self.conf_opt:
+                baseline_diversity_values1 = torch.ones_like(all_weights).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices2.repeat(1, self.num_agents-1) + (all_weights-1).unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+                opt_diversity_values1 = torch.ones_like(all_weights).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices2.repeat(1, self.num_agents-1) + (all_weights-1).unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+            else:                                       
+                baseline_diversity_values1 = torch.ones_like(all_weights).unsqueeze(-1).repeat(1, self.num_agents-1)*all_baseline_matrices1 + (all_weights-1).unsqueeze(-1).repeat(1, self.num_agents-1) * all_baseline_matrices2.repeat(1, self.num_agents-1)
+                opt_diversity_values1 = torch.ones_like(all_weights).unsqueeze(-1).repeat(1, self.num_agents-1)*all_opt_matrices1 + (all_weights-1).unsqueeze(-1).repeat(1, self.num_agents-1) * all_opt_matrices2.repeat(1, self.num_agents-1)
+            baseline_diversity_values2 = all_weights * all_baseline_matrices2.squeeze(1)
+            opt_diversity_values2 = all_weights * all_opt_matrices2.squeeze(1)
 
         return opt_diversity_values1.detach() - baseline_diversity_values1.detach(), opt_diversity_values2.detach() - baseline_diversity_values2.detach(), all_entropy_weight1.detach(), all_entropy_weight2.detach()
 
@@ -278,6 +320,11 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         saved_id11 = []
         saved_id21 = []
 
+        if self.dual_constraints:
+            diff_matrix2 = []
+            saved_id12 = []
+            saved_id22 = []
+
         # Initialize target diversity at end of episode to None
         target_diversity_value = None
         for idx in reversed(range(obs_length)):
@@ -304,8 +351,13 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             repeated_idx1 = torch.repeat_interleave(idx1, self.num_populations, 0)
             repeated_idx1_final = torch.eye(self.num_populations).to(self.device)[repeated_idx1].unsqueeze(1).repeat(1, self.num_agents-1, 1)
             added_tensors1 = torch.eye(self.num_populations).to(self.device).repeat([batch_size,1]).unsqueeze(1)
-
             combined_tensors1 = torch.cat([repeated_idx1_final, added_tensors1], dim=1)
+
+            if self.dual_constraints:
+                repeated_idx2 = torch.repeat_interleave(idx2, self.num_populations, 0)
+                repeated_idx2_final = torch.eye(self.num_populations).to(self.device)[repeated_idx2].unsqueeze(1)
+                added_tensors2 = torch.eye(self.num_populations).to(self.device).repeat([batch_size,1]).unsqueeze(1).repeat(1, self.num_agents-1, 1) 
+                combined_tensors2 = torch.cat([added_tensors2, repeated_idx2_final], dim=1)
 
             obs_only = obs_idx[:, :, :obs_only_length]
             r_obs_only = obs_only.repeat([1, self.num_populations, 1]).view(
@@ -317,6 +369,12 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
                 eval_input1.view(eval_input1.size(0), 1, -1).squeeze(1)
             ).view(batch_size, self.num_populations)
 
+            if self.dual_constraints:
+                eval_input2 = torch.cat([r_obs_only, combined_tensors2, torch.eye(self.num_agents).repeat(r_obs_only.size()[0], 1, 1).to(self.device)], dim=-1)
+                baseline_matrix2 = self.joint_action_value_functions[-1](
+                    eval_input2.view(eval_input2.size(0), 1, -1).squeeze(1)
+                ).view(batch_size, self.num_populations)
+
             target_diversity_value[sp_rl_trunc==1] = target_diversity_value_trunc[sp_rl_trunc==1]
             target_diversity_value = (
                     sp_rl_rew.view(-1, 1) + (
@@ -326,16 +384,31 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             resized_target_values1 = target_diversity_value.repeat(1, self.num_populations)
             resized_target_values1[torch.arange(baseline_matrix1.size()[0]), idx1] = baseline_matrix1[torch.arange(baseline_matrix1.size()[0]), idx1] + self.config.train["tolerance_factor"]
             
+            if self.dual_constraints:
+                resized_target_values2 = target_diversity_value.repeat(1, self.num_populations)
+                resized_target_values2[torch.arange(baseline_matrix2.size()[0]), idx2] = baseline_matrix2[torch.arange(baseline_matrix2.size()[0]), idx2] + self.config.train["tolerance_factor"]
+
             # Append computed measures to their lists
             diff_matrix1.append(resized_target_values1 - baseline_matrix1 - self.config.train["tolerance_factor"])
-
             saved_id11.append(torch.repeat_interleave(idx1, self.num_populations))
             saved_id21.append(torch.arange(self.num_populations).repeat(idx1.size()[0]).to(self.device))
+
+            if self.dual_constraints:
+                diff_matrix2.append(resized_target_values2 - baseline_matrix2 - self.config.train["tolerance_factor"])
+                saved_id12.append(torch.repeat_interleave(idx2, self.num_populations))
+                saved_id22.append(torch.arange(self.num_populations).repeat(idx2.size()[0]).to(self.device))
 
         # Combine lists into a single tensor for actor loss from SP data
         all_diff1 = torch.cat(diff_matrix1, dim=0).detach()
         all_id11 = torch.cat(saved_id11, dim=0)
         all_id21 = torch.cat(saved_id21, dim=0)
+
+        if self.dual_constraints:
+            all_diff2 = torch.cat(diff_matrix2, dim=0).detach()
+            all_id12 = torch.cat(saved_id12, dim=0)
+            all_id22 = torch.cat(saved_id22, dim=0)
+
+            return (all_diff1, all_diff2, all_id11, all_id21, all_id12, all_id22), ((self.compute_const_lagrange1()**2).mean()**0.5), ((self.compute_const_lagrange2()**2).mean()**0.5)
         return (all_diff1, all_id11, all_id21), ((self.compute_const_lagrange1()**2).mean()**0.5)
 
         #TODO check
@@ -357,6 +430,11 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         diff_matrix1 = []
         saved_id11 = []
         saved_id21 = []
+
+        if self.dual_constraints:
+            diff_matrix2 = []
+            saved_id12 = []
+            saved_id22 = []
 
         xp_targ_diversity_value = None
         for idx in reversed(range(obs_length)):
@@ -384,12 +462,18 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             idx1, idx2 = accessed_index[:, 0], accessed_index[:, -1]
             repeated_idx1 = torch.repeat_interleave(idx1, self.num_agents, 0)
             added_matrix1 = torch.eye(self.num_populations).to(self.device)[repeated_idx1].view(batch_size, -1, self.num_populations)
-            
             xp_input1 = torch.cat([xp_obs_only, added_matrix1, torch.eye(self.num_agents).repeat(xp_obs_only.size()[0], 1, 1).to(self.device)], dim=-1)
-            
             baseline_matrix1 = self.joint_action_value_functions[-1](
                 xp_input1.view(xp_input1.size(0), 1, -1).squeeze(1),
             )
+
+            if self.dual_constraints:
+                repeated_idx2 = torch.repeat_interleave(idx2, self.num_agents, 0)
+                added_matrix2 = torch.eye(self.num_populations).to(self.device)[repeated_idx2].view(batch_size, -1, self.num_populations)
+                xp_input2 = torch.cat([xp_obs_only, added_matrix2, torch.eye(self.num_agents).repeat(xp_obs_only.size()[0], 1, 1).to(self.device)], dim=-1)
+                baseline_matrix2 = self.joint_action_value_functions[-1](
+                    xp_input2.view(xp_input2.size(0), 1, -1).squeeze(1),
+                )
 
             xp_targ_diversity_value[xp_rl_trunc==1] = xp_targ_diversity_value_trunc[xp_rl_trunc==1] 
             xp_targ_diversity_value = (
@@ -398,14 +482,25 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             ).detach()
 
             diff_matrix1.append(baseline_matrix1 - xp_targ_diversity_value - self.config.train["tolerance_factor"])
-
             saved_id11.append(idx1)
             saved_id21.append(idx2)
+
+            if self.dual_constraints:
+                diff_matrix2.append(baseline_matrix2 - xp_targ_diversity_value - self.config.train["tolerance_factor"])
+                saved_id12.append(idx2)
+                saved_id22.append(idx1)
 
         all_diff1 = torch.cat(diff_matrix1, dim=0).detach()
         all_id11 = torch.cat(saved_id11, dim=0)
         all_id21 = torch.cat(saved_id21, dim=0)
+
+        if self.dual_constraints:
+            all_diff2 = torch.cat(diff_matrix2, dim=0).detach()
+            all_id12 = torch.cat(saved_id12, dim=0)
+            all_id22 = torch.cat(saved_id22, dim=0)
         
+        if self.dual_constraints:
+            return (all_diff1, all_diff2, all_id11, all_id21, all_id12, all_id22), ((self.compute_const_lagrange1()**2).mean()**0.5), ((self.compute_const_lagrange2()**2).mean()**0.5)
         return (all_diff1, all_id11, all_id21), ((self.compute_const_lagrange1()**2).mean()**0.5)
         
     def compute_sp_critic_loss(
@@ -484,6 +579,8 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         opt_xp_matrics = []
         baseline_xp_matrics = []
         lagrangian_weights1 = []
+        if self.dual_constraints:
+            lagrangian_weights2 = []
         entropy_weight1 = []
         entropy_weight2 = []
 
@@ -492,6 +589,10 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
 
         lagrange_matrix_mean_norm1 = self.compute_const_lagrange1().mean(dim=-1, keepdim=False)
         lagrange_matrix_mean_norm2 = self.compute_const_lagrange1().mean(dim=0, keepdim=False)
+
+        if self.dual_constraints:
+            lagrange_matrix_mean_norm1 = self.compute_const_lagrange1().mean(dim=-1, keepdim=False)
+            lagrange_matrix_mean_norm2 = self.compute_const_lagrange2().mean(dim=-1, keepdim=False)
 
         pos_entropy_weights1 = (lagrange_matrix_mean_norm1 / self.normalizer1) * self.config.loss_weights[
             "entropy_regularizer_loss"
@@ -523,6 +624,9 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             )
 
             lagrangian_matrix1 = self.compute_const_lagrange1().unsqueeze(0).repeat(batch_size, 1, 1)
+            if self.dual_constraints:  
+                lagrangian_matrix2 = self.compute_const_lagrange2().unsqueeze(0).repeat(batch_size, 1, 1)
+
             xp_targ_diversity_value[xp_rl_truncs==1] = xp_targ_diversity_trunc[xp_rl_truncs==1]
             xp_targ_diversity_value = (
                     xp_rl_rew.view(-1, 1) + (
@@ -530,6 +634,8 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
             ).detach()
 
             lagrangian_weights1.append(lagrangian_matrix1[torch.arange(batch_size), idx1, idx2].unsqueeze(-1))
+            if self.dual_constraints:
+                lagrangian_weights2.append(lagrangian_matrix2[torch.arange(batch_size), idx2, idx1].unsqueeze(-1))
             opt_xp_matrics.append(-xp_targ_diversity_value.clone())
             baseline_xp_matrics.append(-baseline_matrix)
             entropy_weight1.append(pos_entropy_weights1[idx1])
@@ -537,14 +643,23 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
 
         all_baseline_matrices = torch.cat(baseline_xp_matrics, dim=0)
         all_opt_matrices = torch.cat(opt_xp_matrics, dim=0)
+        if self.dual_constraints:   
+            all_lagrangian_matrices2 = torch.cat(lagrangian_weights2, dim=0)
         all_lagrangian_matrices1 = torch.cat(lagrangian_weights1, dim=0)
         all_entropy_weights1 = torch.cat(entropy_weight1, dim=0)
         all_entropy_weights2 = torch.cat(entropy_weight2, dim=0)
 
-        xp_lagrange_advantages = ((all_opt_matrices-all_baseline_matrices) * (
-                all_lagrangian_matrices1
-            )
-        ).squeeze(1)
+        if not self.dual_constraints:
+            xp_lagrange_advantages = ((all_opt_matrices-all_baseline_matrices) * (
+                    all_lagrangian_matrices1
+                )
+            ).squeeze(1)
+        else:
+            xp_lagrange_advantages = ((all_opt_matrices-all_baseline_matrices) * (
+                    all_lagrangian_matrices1 + all_lagrangian_matrices2
+                )
+            ).squeeze(1)
+
         return xp_lagrange_advantages.detach(), all_entropy_weights1.detach(), all_entropy_weights2.detach()
 
     def compute_xp_old_probs(self, xp_obs, xp_acts, xp_rews, xp_dones, xp_n_obses):
@@ -768,9 +883,14 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
 
         # Compute SP Lagrange Loss
         if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
-            sp_lagrange_data, lagrange_mult_norm_sp1 = self.compute_sp_lagrange_loss(
-                obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
-            )
+            if not self.dual_constraints:
+                sp_lagrange_data, lagrange_mult_norm_sp1 = self.compute_sp_lagrange_loss(
+                    obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
+                )
+            else:
+                sp_lagrange_data, lagrange_mult_norm_sp1, lagrange_mult_norm_sp2 = self.compute_sp_lagrange_loss(
+                    obs_batch, sp_n_obs_batch, acts_batch, sp_done_batch, sp_trunc_batch, rewards_batch
+                )
 
         # Get XP data and preprocess it for matrix computation
         # total_xp_critic_loss, total_xp_actor_loss, total_xp_entropy_loss, xp_pred_div, xp_lagrange_loss = 0, 0, 0, 0, 0
@@ -782,27 +902,52 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
 
         # Compute XP Lagrange Loss
         if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
-            xp_lagrange_data, lagrange_mult_norm_xp1 = self.compute_xp_lagrange_loss(
-                xp_obs, xp_acts, xp_rews, xp_dones, xp_trunc_batch, xp_n_obses
-            )
+            if not self.dual_constraints:
+                xp_lagrange_data, lagrange_mult_norm_xp1 = self.compute_xp_lagrange_loss(
+                    xp_obs, xp_acts, xp_rews, xp_dones, xp_trunc_batch, xp_n_obses
+                )
+            else: 
+                xp_lagrange_data, lagrange_mult_norm_xp1, lagrange_mult_norm_xp2 = self.compute_xp_lagrange_loss(
+                    xp_obs, xp_acts, xp_rews, xp_dones, xp_trunc_batch, xp_n_obses
+                )
 
         total_critic_loss = sp_critic_loss * self.config.loss_weights["sp_val_loss_weight"] + total_xp_critic_loss * self.config.loss_weights["xp_val_loss_weight"]
         if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
             #total_lagrange_loss = self.config.loss_weights["lagrange_weights"] * (sp_lagrange_loss + xp_lagrange_loss)
-            sp_all_diff1, sp_all_id11, sp_all_id21 = sp_lagrange_data
-            xp_all_diff1, xp_all_id11, xp_all_id21 = xp_lagrange_data
+            if not self.dual_constraints:   
+                sp_all_diff1, sp_all_id11, sp_all_id21 = sp_lagrange_data
+                xp_all_diff1, xp_all_id11, xp_all_id21 = xp_lagrange_data
 
-            all_diff1 = torch.cat([sp_all_diff1.view(-1), xp_all_diff1.view(-1)], dim=0)
-            all_id11 = torch.cat([sp_all_id11.view(-1), xp_all_id11.view(-1)], dim=0)
-            all_id21 = torch.cat([sp_all_id21.view(-1), xp_all_id21.view(-1)], dim=0)
+                all_diff1 = torch.cat([sp_all_diff1.view(-1), xp_all_diff1.view(-1)], dim=0)
+                all_id11 = torch.cat([sp_all_id11.view(-1), xp_all_id11.view(-1)], dim=0)
+                all_id21 = torch.cat([sp_all_id21.view(-1), xp_all_id21.view(-1)], dim=0)
 
-            for ii in range(self.num_populations):
-                for jj in range(self.num_populations):
-                    if ii != jj:
-                        eligible_diffs = all_diff1[torch.logical_and(all_id11 == ii, all_id21 == jj)]
-                        if eligible_diffs.size()[0] != 0:
-                            self.lagrange_multiplier_matrix1[ii][jj] = F.relu(F.relu(self.lagrange_multiplier_matrix1[ii][jj]) - (self.config.train["lagrange_lr"] * self.config.loss_weights["lagrange_weights"] * eligible_diffs.mean()))
-                            
+                for ii in range(self.num_populations):
+                    for jj in range(self.num_populations):
+                        if ii != jj:
+                            eligible_diffs = all_diff1[torch.logical_and(all_id11 == ii, all_id21 == jj)]
+                            if eligible_diffs.size()[0] != 0:
+                                self.lagrange_multiplier_matrix1[ii][jj] = F.relu(F.relu(self.lagrange_multiplier_matrix1[ii][jj]) - (self.config.train["lagrange_lr"] * self.config.loss_weights["lagrange_weights"] * eligible_diffs.mean()))
+            else:
+                sp_all_diff1, sp_all_diff2, sp_all_id11, sp_all_id21, sp_all_id12, sp_all_id22 = sp_lagrange_data
+                xp_all_diff1, xp_all_diff2, xp_all_id11, xp_all_id21, xp_all_id12, xp_all_id22 = xp_lagrange_data
+
+                all_diff1 = torch.cat([sp_all_diff1.view(-1), xp_all_diff1.view(-1)], dim=0)
+                all_id11 = torch.cat([sp_all_id11.view(-1), xp_all_id11.view(-1)], dim=0)
+                all_id21 = torch.cat([sp_all_id21.view(-1), xp_all_id21.view(-1)], dim=0)
+                all_id12 = torch.cat([sp_all_id12.view(-1), xp_all_id12.view(-1)], dim=0)
+                all_id22 = torch.cat([sp_all_id22.view(-1), xp_all_id22.view(-1)], dim=0)
+                all_diff2 = torch.cat([sp_all_diff2.view(-1), xp_all_diff2.view(-1)], dim=0)
+                for ii in range(self.num_populations):
+                    for jj in range(self.num_populations):
+                        if ii != jj:
+                            eligible_diffs = all_diff1[torch.logical_and(all_id11 == ii, all_id21 == jj)]
+                            if eligible_diffs.size()[0] != 0:
+                                self.lagrange_multiplier_matrix1[ii][jj] = F.relu(F.relu(self.lagrange_multiplier_matrix1[ii][jj]) - (self.config.train["lagrange_lr"] * self.config.loss_weights["lagrange_weights"] * eligible_diffs.mean()))
+                            eligible_diffs2 = all_diff2[torch.logical_and(all_id12 == ii, all_id22 == jj)]
+                            if eligible_diffs2.size()[0] != 0:
+                                self.lagrange_multiplier_matrix2[ii][jj] = F.relu(F.relu(self.lagrange_multiplier_matrix2[ii][jj]) - (self.config.train["lagrange_lr"] * self.config.loss_weights["lagrange_weights"] * eligible_diffs2.mean()))
+                 
         # Write losses to logs
         self.next_log_update += self.logger.train_log_period
         train_step = (self.total_updates-1) * self.logger.steps_per_update
@@ -819,10 +964,16 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         self.logger.log_item("Train/xp/entropy", total_xp_entropy_loss,
                                  train_step=train_step, updates=self.total_updates-1)
         if self.total_updates % self.config.train["lagrange_update_period"] == 0:
-            self.logger.log_item("Train/sp/lagrange_mult_norm", lagrange_mult_norm_sp1,
-                                     train_step=train_step, updates=self.total_updates-1)
-            self.logger.log_item("Train/xp/lagrange_mult_norm", lagrange_mult_norm_xp1,
-                                     train_step=train_step, updates=self.total_updates-1)
+            if not self.dual_constraints:
+                self.logger.log_item("Train/sp/lagrange_mult_norm", lagrange_mult_norm_sp1,
+                                        train_step=train_step, updates=self.total_updates-1)
+                self.logger.log_item("Train/xp/lagrange_mult_norm", lagrange_mult_norm_xp1,
+                                        train_step=train_step, updates=self.total_updates-1)
+            else:
+                self.logger.log_item("Train/sp/lagrange_mult_norm", lagrange_mult_norm_sp1+lagrange_mult_norm_sp2,
+                                        train_step=train_step, updates=self.total_updates-1)
+                self.logger.log_item("Train/xp/lagrange_mult_norm", lagrange_mult_norm_xp1+lagrange_mult_norm_xp2,
+                                        train_step=train_step, updates=self.total_updates-1)
         
         self.logger.commit()
         total_critic_loss.backward()

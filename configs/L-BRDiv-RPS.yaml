@@ -40,7 +40,7 @@ populations:
   num_agents_per_population: 2
 
 train:
-  method: L-BRDiv
+  method: BRDiv
   timesteps_per_update: 4
   gamma: 0.95
   target_update_rate: 1e-3
