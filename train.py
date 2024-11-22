@@ -19,6 +19,7 @@ import os
 import wandb
 from omegaconf import OmegaConf
 
+
 class DiversityTraining(object):
     """
         A class that runs an experiment on learning with Upside Down Reinforcement Learning (UDRL).
