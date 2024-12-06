@@ -50,7 +50,7 @@ pip3 install nashpy==0.0.21
 pip3 install torch torchvision torchaudio
 pip3 install moviepy
 pip3 install pettingzoo
-pip3 install agilerl
+pip3 install agilerl==1.0.13
 ```
 
 Install melting pot from our forked version
