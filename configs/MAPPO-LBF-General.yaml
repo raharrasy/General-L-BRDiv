@@ -1,0 +1,66 @@
+defaults:
+  - hydra: hydra_simple
+  - _self_
+
+
+name: CookingZoo
+separate_controllers: false
+
+logger:
+  load_dir: ${name}
+  log_grad: false
+  project: DiversityGeneration
+  entity: gingerninja
+  logger_period: 0.1
+  save_model: true
+  save_model_period: 5
+  store_video: true
+
+# # Data collection-related parameters
+# matrix-game-no-state-v0
+env:
+  name: stag-hunt-general-v0
+  parallel:
+    sp_collection: 160
+    xp_collection: 0
+    eval: 16
+
+run:
+  use_cuda: false
+  num_timesteps: 240000000
+  num_eval_episodes: 1
+  seed: 0
+  eval_seed: 500
+  total_checkpoints: 50
+  load_from_checkpoint: -1
+  device_id: 3
+
+populations:
+  num_populations: 640000000
+  num_agents_per_population: 3
+
+train:
+  method: MAPPO
+  timesteps_per_update: 8
+  gamma: 0.99
+  target_update_rate: 1e-3
+  lr: 0.0001
+  max_grad_norm: 1.0
+  epochs_per_update: 10
+  eps_clip: 0.2
+  dual_clip: 3.0
+  lagrange_update_period: 10
+  with_dual_clip: false
+
+loss_weights:
+  sp_val_loss_weight: 5.0
+  entropy_regularizer_loss: 0.0005
+
+model:
+  actor_dims:
+    - 128
+    - 128
+  critic_dims:
+    - 128
+    - 128
+  init_ortho: false
