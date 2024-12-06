@@ -97,7 +97,7 @@ class parallel_env(ParallelEnv):
         total_episodes = 10,
         seed = 1235,
         teammate_id = -1,
-        blinded = False,
+        blinded = True,
         render_mode=None,
     ):
         self.possible_agents = ["player_" + str(r) for r in range(players)]
