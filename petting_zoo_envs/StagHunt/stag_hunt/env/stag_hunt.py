@@ -8,6 +8,7 @@ from pettingzoo.utils import parallel_to_aec, wrappers
 
 STAG = 0
 HARE = 1
+NONE = 2
 MOVES = ["STAG", "HARE"]
 NUM_ITERS = 1
 
@@ -167,10 +168,8 @@ class parallel_env(ParallelEnv):
         observations = {}
         for i in range(len(self.agents)):
             obs_vec = np.zeros(9)
-            added = 0
             for j in range(len(self.agents)):
-                obs_vec[int(actions[self.agents[(i+1)%len(self.agents)]])+3*added] = 1
-                added += 1
+                obs_vec[int(actions[self.agents[(i+j)%len(self.agents)]])+3*j] = 1
             observations[self.agents[i]] = obs_vec
         self.state = {agent: np.argmax(observations[agent]) for agent in observations}
 

@@ -19,15 +19,15 @@ logger:
 # # Data collection-related parameters
 # matrix-game-no-state-v0
 env:
-  name: rps-v0
+  name: stag-hunt-general-v0
   parallel:
-    sp_collection: 16
+    sp_collection: 128
     xp_collection: 0
-    eval: 6
+    eval: 16
 
 run:
   use_cuda: false
-  num_timesteps: 800000
+  num_timesteps: 72000000
   num_eval_episodes: 1
   seed: 0
   eval_seed: 500
@@ -37,7 +37,7 @@ run:
 
 populations:
   num_populations: 3
-  num_agents_per_population: 2
+  num_agents_per_population: 3
 
 train:
   method: MAPPO
@@ -58,9 +58,9 @@ loss_weights:
 
 model:
   actor_dims:
-    - 64
-    - 64
+    - 128
+    - 128
   critic_dims:
-    - 64
-    - 64
+    - 128
+    - 128
   init_ortho: false

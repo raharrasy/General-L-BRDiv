@@ -19,7 +19,7 @@ logger:
 # # Data collection-related parameters
 # matrix-game-no-state-v0
 env:
-  name: rps-v0
+  name: lbf-v0
   parallel:
     sp_collection: 4
     xp_collection: 12
@@ -36,8 +36,8 @@ run:
   device_id: 3
 
 populations:
-  num_populations: 3
-  num_agents_per_population: 2
+  num_populations: 6
+  num_agents_per_population: 3
 
 train:
   method: BRDiv

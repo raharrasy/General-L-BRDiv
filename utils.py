@@ -7,6 +7,9 @@ from iterative_rps import rps_v0
 from iterative_rps import n_agent_rps_v0
 from lbforaging import lbf_v0
 from lbforaging import lbf_simple_v0
+from lbforaging import lbf_general_v0
+from stag_hunt import state_based_n_agent_stag_hunt_v0
+from stag_hunt import n_agent_stag_hunt_v0
 
 class PettingZooVectorizationParallelWrapper(PettingZooAutoResetParallelWrapper):
 
@@ -19,6 +22,12 @@ class PettingZooVectorizationParallelWrapper(PettingZooAutoResetParallelWrapper)
             return lbf_v0
         elif env_name == "lbf-simple-v0":
             return lbf_simple_v0
+        elif env_name == "lbf-general-v0":
+            return lbf_general_v0
+        elif env_name == "stag-hunt-simple-v0":
+            return n_agent_stag_hunt_v0
+        elif env_name == "stag-hunt-general-v0":
+            return state_based_n_agent_stag_hunt_v0
         raise Exception('Currently unsupported env!')
 
     def __init__(self, env: str, n_envs: int):
