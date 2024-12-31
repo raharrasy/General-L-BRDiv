@@ -290,6 +290,124 @@ class DiversityTraining(object):
             #         wandb.log({f'video/vid_{pop_id}_{idx}': wandb.Video(video_paths[idx], fps=1, format="mp4")}, commit=True)
         
         return returns
+    
+    def eval_aht_performance(self, agent_population, aht_agent, logger, logging_id, eval=False, pop_size=None, num_agents_per_pop=None, make_video=False):
+        """
+            A method to evaluate the resulting performance of a trained agent population model when 
+            dealing with its best-response policy.
+            :param agent_population: An collection of agent policies whose SP returns are evaluated
+            :param logger: A wandb logger used for writing results.
+            :param logging_id: Checkpoint ID for logging.
+        """
+
+        # Create env for policy eval
+
+        # TODO Uncomment once fixes in PZoo is implemented
+        # def make_video_env(env_name, video_path):
+        #     env = gym.make(env_name)
+        #     vc = VideoRecorder(env, path=video_path, enabled=True) 
+        #     return env, vc
+        
+        env1 = self.env_select(self.config.env["name"]).parallel_env(render_mode=None)
+
+        if pop_size is None:
+            num_pops = self.config.populations["num_populations"]
+            num_agents_per_pop = self.config.populations["num_agents_per_population"]
+        else:
+            num_pops = pop_size
+            num_agents_per_pop = num_agents_per_pop
+            
+        returns = np.zeros((num_pops, num_pops, self.config.populations["num_agents_per_population"]))
+
+        for pop_id in range(num_pops):
+            env_train = PettingZooVectorizationParallelWrapper(self.config.env["name"], n_envs=self.config.env.parallel["eval"])
+            
+            # TODO Uncomment once fixes in PZoo is implemented
+            # if make_video:
+            #     video_env_list = [make_video_env(self.config.env["name"], os.getcwd()+f"/videos/{logging_id}_{pop_id}_{a_id}.mp4") for a_id in range(num_agents_per_pop)]
+            #     video_paths = [os.getcwd()+f"/videos/{logging_id}_{pop_id}_{a_id}.mp4" for a_id in range(num_agents_per_pop)]
+
+            # Initialize objects to track returns.
+            device = torch.device("cuda" if self.config.run['use_cuda'] and torch.cuda.is_available() else "cpu")
+            num_dones = [0] * self.config.env.parallel["eval"]
+            # Log per thread and per agent discounted returns
+            per_worker_and_agent_rew = [[0.0 for _ in range(self.config.populations["num_agents_per_population"])] for _ in range(self.config.env.parallel["eval"])]
+            # Log per thread and per agent undiscounted returns
+            per_worker_and_agent_non_disc_rew = [[0.0 for _ in range(self.config.populations["num_agents_per_population"])] for _ in range(self.config.env.parallel["eval"])]
+
+            # Initialize initial obs and states for model
+            obs, _ = env_train.reset(seed=self.config.run["eval_seed"])
+            obs = self.postprocess_obs(obs)
+            
+            time_elapsed = np.zeros([obs.shape[0], obs.shape[1], 1])
+            avgs_all_agents = [[] for _ in range(self.config.populations["num_agents_per_population"])]
+            avgs_non_disc_all_agents = [[] for _ in range(self.config.populations["num_agents_per_population"])]
+
+            while (any([k < self.config.run["num_eval_episodes"] for k in num_dones])):
+                #acts = agent_population.decide_acts(np.concatenate([obs, remaining_target, time_elapsed], axis=-1))
+                one_hot_id_shape = list(obs.shape)[:-1]
+                one_hot_ids = self.to_one_hot_population_id(pop_id*np.ones(one_hot_id_shape), total_populations=num_pops)
+
+                # Decide agent's action based on model & target returns. Note that additional input concatenated to 
+                # give population id info to policy.
+
+                acts = agent_population.decide_acts(np.concatenate([obs, one_hot_ids], axis=-1), eval=eval)
+                aht_acts = aht_agent.decide_acts(np.concatenate(obs), eval=eval)
+
+                for single_act, single_aht_act in zip(acts, aht_acts):
+                    single_act[-1] = single_aht_act
+                acts = self.postprocess_acts(acts, env = env1)
+                
+                # Execute prescribed action
+                n_obs, rews, dones, trunc, infos = env_train.step(acts)
+                n_obs, rews, dones, trunc = self.postprocess_others(n_obs, rews, dones, trunc, infos)
+
+                obs = n_obs
+                time_elapsed = time_elapsed+1
+
+                # Log per thread returns
+                for thread_id in range(self.config.env.parallel["eval"]):
+                    for agent_id in range(self.config.populations["num_agents_per_population"]):
+                        per_worker_and_agent_rew[thread_id][agent_id] = per_worker_and_agent_rew[thread_id][agent_id] + (self.config.train["gamma"]**(time_elapsed[thread_id][0][0]-1))*rews[thread_id][agent_id] 
+                
+                # Log per thread discounted returns
+                for thread_id in range(self.config.env.parallel["eval"]):
+                    for agent_id in range(self.config.populations["num_agents_per_population"]):
+                        per_worker_and_agent_non_disc_rew[thread_id][agent_id] = per_worker_and_agent_non_disc_rew[thread_id][agent_id] + rews[thread_id][agent_id] 
+
+                for idx, flag in enumerate(dones):
+                    # If an episode in one of the threads ends...
+                    if flag or trunc[idx]:
+                        # Reset all relevant variables used in tracking and send logged returns in the finished thread to a storage
+                        time_elapsed[idx] = np.zeros([obs.shape[1], 1])
+                        if num_dones[idx] < self.config.run['num_eval_episodes']:
+                            num_dones[idx] += 1
+                            for a_id in range(self.config.populations["num_agents_per_population"]):
+                                avgs_all_agents[a_id].append(per_worker_and_agent_rew[idx][a_id])
+                                avgs_non_disc_all_agents[a_id].append(per_worker_and_agent_non_disc_rew[idx][a_id])
+                            
+                        for a_id in range(self.config.populations["num_agents_per_population"]):
+                            per_worker_and_agent_rew[idx][a_id] = 0
+                            per_worker_and_agent_non_disc_rew[idx][a_id] = 0
+
+                      
+            # Log achieved returns.
+            # for a_id in range(self.config.populations["num_agents_per_population"]):
+            #     returns[pop_id, pop_id, a_id] = np.mean(avgs_all_agents[a_id])
+            # env_train.close()
+
+            for a_id in range(self.config.populations["num_agents_per_population"]):
+                logger.log_item(
+                    f"Returns/sp/aht_discounted_{pop_id}",
+                    np.mean(avgs_all_agents[-1]),
+                    checkpoint=logging_id)
+                logger.log_item(
+                    f"Returns/sp/aht_nondiscounted_{pop_id}",
+                    np.mean(avgs_non_disc_all_agents[-1]),
+                    checkpoint=logging_id)
+
+        
+        return returns
 
     def eval_xp_policy_performance(self, agent_population, logger, logging_id, eval=False, pop_size=None):
         """
@@ -456,7 +574,7 @@ class DiversityTraining(object):
             
             # Decide agent's action based on model and execute.
             real_input = np.concatenate([self.stored_obs, one_hot_ids], axis=-1)
-            original_acts = agent_population.decide_acts(real_input, True, epsilon=epsilon)
+            original_acts = agent_population.decide_acts(real_input, True)
             acts = self.postprocess_acts(original_acts, self.original_env)
             self.stored_nobs, rews, dones, trunc, infos = env.step(acts)
             self.stored_nobs, rews, dones, trunc = self.postprocess_others(self.stored_nobs, rews, dones, trunc, infos)
@@ -540,7 +658,7 @@ class DiversityTraining(object):
             # decide actions
             real_input = np.concatenate([self.stored_obs_xp, np.concatenate([one_hot_ids, one_hot_ids2], axis=-2)], axis=-1)
             original_acts = agent_population.decide_acts(
-                real_input, epsilon=epsilon, eval=iterative_eval_flag
+                real_input, eval=iterative_eval_flag
             )
             acts = self.postprocess_acts(original_acts, self.original_env)
             self.stored_nobs_xp, rews, dones, trunc, infos = env.step(acts)

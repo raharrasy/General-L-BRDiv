@@ -27,7 +27,7 @@ env:
 
 run:
   use_cuda: false
-  num_timesteps: 240000000
+  num_timesteps: 160000000
   num_eval_episodes: 1
   seed: 0
   eval_seed: 500

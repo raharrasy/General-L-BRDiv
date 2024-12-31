@@ -38,11 +38,12 @@ class MAPPOAgentPopulations(object):
         self.effective_crit_obs_size = obs_size + self.num_agents
 
         total_checkpoints = self.config.run["total_checkpoints"]
-        if not "sp_collection" in self.config.env.parallel.keys() and not "xp_collection" in self.config.env.parallel.keys():
-            timesteps_per_checkpoint = self.config.run["num_timesteps"]//(total_checkpoints*(self.config.env.parallel["agent1_collection"]+self.config.env.parallel["agent2_collection"]))
-        else:
-            timesteps_per_checkpoint = self.config.run["num_timesteps"]//(total_checkpoints*(self.config.env.parallel["sp_collection"]+self.config.env.parallel["xp_collection"]))
-        self.projected_total_updates = total_checkpoints * math.ceil((timesteps_per_checkpoint+0.0)/self.config.train["timesteps_per_update"])
+        if mode == "train":
+            if not "sp_collection" in self.config.env.parallel.keys() and not "xp_collection" in self.config.env.parallel.keys():
+                timesteps_per_checkpoint = self.config.run["num_timesteps"]//(total_checkpoints*(self.config.env.parallel["agent1_collection"]+self.config.env.parallel["agent2_collection"]))
+            else:
+                timesteps_per_checkpoint = self.config.run["num_timesteps"]//(total_checkpoints*(self.config.env.parallel["sp_collection"]+self.config.env.parallel["xp_collection"]))
+            self.projected_total_updates = total_checkpoints * math.ceil((timesteps_per_checkpoint+0.0)/self.config.train["timesteps_per_update"])
 
         actor_dims = [self.obs_size-self.num_populations, *self.config.model.actor_dims, self.act_size]
         critic_dims = [self.num_agents * (self.obs_size-self.num_populations), *self.config.model.critic_dims, 1]
@@ -72,7 +73,6 @@ class MAPPOAgentPopulations(object):
         self.hard_copy()
 
         # Initialize optimizer
-        params_list = None
         critic_params_list = [
             *(param for critic in self.joint_action_value_functions for param in critic.parameters())
         ]
@@ -294,7 +294,7 @@ class MAPPOAgentPopulations(object):
 
         return all_vals
 
-    def decide_acts(self, obs_w_commands, with_log_probs=False, eval=False, epsilon=None):
+    def decide_acts(self, obs_w_commands, with_log_probs=False, eval=False):
         """
             A method to decide the actions of agents given obs & target returns.
             :param obs_w_commands: A numpy array that has the obs concatenated with the target returns.
@@ -629,7 +629,7 @@ class MAPPOAgentPopulations(object):
         """
 
         if self.mode == "train":
-            model_dir = self.config['load_dir']
+            model_dir = self.config.run['model_load_dir']
 
             for id, model in enumerate(self.joint_policy):
                 model.load_state_dict(
@@ -660,7 +660,7 @@ class MAPPOAgentPopulations(object):
             )
 
         else:
-            model_dir = self.config.env['model_load_dir']
+            model_dir = self.config.run['model_load_dir']
             if not overridden_model_dir is None:
                 model_dir = overridden_model_dir
 

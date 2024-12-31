@@ -155,7 +155,7 @@ class parallel_env(ParallelEnv):
 
         self.num_moves += 1
         env_truncation = self.num_moves >= NUM_ITERS
-        terminations = {agent: np.all(self.available_items == 0) or env_truncation for agent in self.agents}
+        terminations = {agent: np.all(self.available_items == 0) for agent in self.agents}
 
         truncations = {agent: env_truncation for agent in self.agents}
 

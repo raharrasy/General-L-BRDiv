@@ -45,11 +45,11 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         self.constant_lagrange = False
         self.conf_opt = True
         self.dual_constraints = False
-        if self.config.env["name"] == "BRDiv":
+        if self.config.train["method"] == "BRDiv":
             self.constant_lagrange = True
-        elif self.config.env["name"] == "LBRDiv-Ego-Opt":
+        elif self.config.train["method"] == "LBRDiv-Ego-Opt":
             self.conf_opt = False
-        elif self.config.env["name"] == "LBRDiv-Two-Constraints":
+        elif self.config.train["method"] == "LBRDiv-Two-Constraints":
             self.dual_constraints = True
             # Add lagrange multiplier to help uphold second constraints
             lagrange_mat2 = self.config.train["init_lagrange"]*torch.ones([self.config.populations["num_populations"], self.config.populations["num_populations"]]).double().to(self.device)
@@ -247,7 +247,7 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         action_likelihood = []
         action_entropy = []
 
-        anneal_end = self.config.train["anneal_end"] * self.projected_total_updates
+        # anneal_end = self.config.train["anneal_end"] * self.projected_total_updates
         for idx in reversed(range(obs_length)):
             acts_idx = acts[:, idx, :, :]
             obs_idx = torch.cat([obs[:, idx, :, :], torch.eye(self.num_agents).repeat(batch_size, 1, 1).to(self.device)], dim=-1)
@@ -963,7 +963,7 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
                                  train_step=train_step, updates=self.total_updates-1)
         self.logger.log_item("Train/xp/entropy", total_xp_entropy_loss,
                                  train_step=train_step, updates=self.total_updates-1)
-        if self.total_updates % self.config.train["lagrange_update_period"] == 0:
+        if (not self.constant_lagrange) and self.total_updates % self.config.train["lagrange_update_period"] == 0:
             if not self.dual_constraints:
                 self.logger.log_item("Train/sp/lagrange_mult_norm", lagrange_mult_norm_sp1,
                                         train_step=train_step, updates=self.total_updates-1)
@@ -1014,7 +1014,7 @@ class NAgentLBRDivAgentPopulations(MAPPOAgentPopulations):
         super().save_model(int_id, save_model)
 
     def load_model(self, int_id, overridden_model_dir=None):
-        model_dir = self.config.env['model_load_dir']
+        model_dir = self.config.run['model_load_dir']
         if self.mode == "train":
             self.lagrange_multiplier_matrix1.load_state_dict(
                 torch.load(f"{model_dir}/models/model_{int_id}-lagrange1.pt")

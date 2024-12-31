@@ -94,7 +94,7 @@ class parallel_env(ParallelEnv):
             )
             return
 
-        if len(self.agents) == 2:
+        if len(self.agents) == 3:
             string = "Current state: Agent1: {} , Agent2: {}, Agent3: {}".format(
                 MOVES[self.state[self.agents[0]]], MOVES[self.state[self.agents[1]]], MOVES[self.state[self.agents[2]]]
             )
