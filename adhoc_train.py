@@ -72,6 +72,9 @@ class AdhocTraining(object):
     def get_min_max_performance(self, env_name):
         if env_name == "lbf-simple-v0":
             return [0] * self.config.populations["num_populations"], [3] * self.config.populations["num_populations"]
+        if env_name == "n-agent-rps-v0":
+            return [0] * self.config.populations["num_populations"], [1] * self.config.populations["num_populations"]
+        
         raise Exception('Currently unsupported env!')
 
     def get_obs_sizes(self, obs_space):
@@ -226,6 +229,7 @@ class AdhocTraining(object):
 
             for a1, a2 in zip(acts, ah_agents_acts):
                 a1[-1] = a2
+
             dict_acts = self.postprocess_acts(acts, env = env)
             self.stored_nobs, rews, dones, trunc, infos = env.step(dict_acts)
             self.stored_nobs, rews, dones, trunc = self.postprocess_others(self.stored_nobs, rews, dones, trunc, infos)
@@ -360,6 +364,7 @@ class AdhocTraining(object):
                         obs, agent_prev_action, agent_prev_rew
                     ], axis=-1
                 )
+                print("Prev Inputs: ",agent_prev_action, agent_prev_rew)
 
                 agent_representation, cell_values = adhoc_agent.get_teammate_representation(
                     encoder_representation_input, cell_values
@@ -371,11 +376,21 @@ class AdhocTraining(object):
                 aht_agents_acts = adhoc_agent.decide_acts(ah_policy_input, True)
                 for act, aht_act in zip(acts, aht_agents_acts):
                     act[-1] = aht_act
-                acts = self.postprocess_acts(acts, env = env1)
+                dict_acts = self.postprocess_acts(acts, env = env1)
                 
                 # Execute prescribed action
-                n_obs, rews, dones, trunc, infos = env_train.step(acts)
+                n_obs, rews, dones, trunc, infos = env_train.step(dict_acts)
                 n_obs, rews, dones, trunc = self.postprocess_others(n_obs, rews, dones, trunc, infos)
+
+                next_rews = np.tile(
+                np.expand_dims(np.expand_dims(rews[:, -1], -1), -1), 
+                    (1, self.config.populations["num_agents_per_population"], 1)
+                )
+
+                # Store data from most recent timestep into tracking variables
+                one_hot_acts = agent_population.to_one_hot(acts)
+                agent_prev_action = one_hot_acts
+                agent_prev_rew = next_rews
 
                 obs = n_obs
                 time_elapsed = time_elapsed+1
