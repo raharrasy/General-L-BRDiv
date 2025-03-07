@@ -31,7 +31,7 @@ env:
 run:
   use_cuda: false
   num_timesteps: 1600000
-  num_eval_episodes: 1
+  num_eval_episodes: 10
   seed: 0
   eval_seed: 500
   total_checkpoints: 50

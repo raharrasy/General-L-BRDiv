@@ -199,7 +199,6 @@ class AdhocAgent(object):
         act_dist = dist.OneHotCategorical(logits=action_logits)
         act_log_likelihood = act_dist.log_prob(acts_executed)
 
-        print("Tensor Sizes :", act_log_likelihood.size(), all_predicted_values.size(), baseline_values.size())
         actor_loss = (-act_log_likelihood * (
             (all_predicted_values-baseline_values).detach()
         )).mean()

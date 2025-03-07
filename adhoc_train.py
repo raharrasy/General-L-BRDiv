@@ -346,25 +346,11 @@ class AdhocTraining(object):
                 # give population id info to policy.
 
                 acts = agent_population.decide_acts(np.concatenate([obs, one_hot_ids], axis=-1), eval=eval)
-                
-                if agent_prev_action is None:
-                    agent_prev_action = np.zeros([
-                        self.config.env.parallel["eval"], 
-                        act_sizes_all[0], act_sizes_all[-1]]
-                    )
-
-                if agent_prev_rew is None:
-                    agent_prev_rew = np.zeros([
-                        self.config.env.parallel["eval"], 
-                        act_sizes_all[0], 1]
-                    )
-
                 encoder_representation_input = np.concatenate(
                     [
                         obs, agent_prev_action, agent_prev_rew
                     ], axis=-1
                 )
-                print("Prev Inputs: ",agent_prev_action, agent_prev_rew)
 
                 agent_representation, cell_values = adhoc_agent.get_teammate_representation(
                     encoder_representation_input, cell_values
@@ -414,7 +400,7 @@ class AdhocTraining(object):
                                 self.device)
                             agent_prev_action[idx] = np.zeros(list(agent_prev_action[idx].shape))
                             agent_prev_rew[idx] = np.zeros(list(agent_prev_rew[idx].shape))
-                        episodes_elapsed_per_thread[idx] = min(episodes_elapsed_per_thread[idx] + 1, self.config.run["num_eval_episodes"])
+                        episodes_elapsed_per_thread[idx] = min(episodes_elapsed_per_thread[idx], self.config.run["num_eval_episodes"])
                         time_elapsed[idx][0] = 0
 
             logger.log_item(
