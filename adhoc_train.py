@@ -364,7 +364,6 @@ class AdhocTraining(object):
                         obs, agent_prev_action, agent_prev_rew
                     ], axis=-1
                 )
-                print("Prev Inputs: ",agent_prev_action, agent_prev_rew)
 
                 agent_representation, cell_values = adhoc_agent.get_teammate_representation(
                     encoder_representation_input, cell_values

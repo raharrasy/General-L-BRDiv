@@ -199,7 +199,6 @@ class AdhocAgent(object):
         act_dist = dist.OneHotCategorical(logits=action_logits)
         act_log_likelihood = act_dist.log_prob(acts_executed)
 
-        print("Tensor Sizes :", act_log_likelihood.size(), all_predicted_values.size(), baseline_values.size())
         actor_loss = (-act_log_likelihood * (
             (all_predicted_values-baseline_values).detach()
         )).mean()
@@ -226,7 +225,7 @@ class AdhocAgent(object):
 
         # Compute SP Critic Loss
         total_critic_loss = self.compute_critic_loss(
-            obs_batch, rewards_batch, done_batch, trunc_batch, n_obs_batch, agent_representations.detach()
+            obs_batch, rewards_batch, done_batch, trunc_batch, n_obs_batch, agent_representations
         )
 
         total_actor_loss, total_entropy_loss = self.compute_actor_and_entropy_loss(
